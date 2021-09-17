@@ -1,0 +1,154 @@
+
+
+
+data bbb;
+set cohort;
+time=min(deathtime,endoffollow-t0-29);
+run;
+
+data model;
+merge burdenmodel(in=a) bbb(keep=scrssn group weight norgan time);
+by scrssn;
+if a;
+if group="2HOS" then hos=1;else hos=0;
+if group="3ICU" then icu=1; else icu=0;
+if group="1POS" then pos=1; else pos=0;
+run;
+
+proc means data=model;
+var age60 age70 raceb raceo sexm smokef smokec
+_X5-_X7 hxnout1 hxnout2 hxnmed1 hxnmed2  hxnin1 hxnegfr1
+bmiob bmiover lung cancer cvd cad dementia pad hyperlip htn dm depression anxiety ckd cmrb1 cmrb2 hepc longterm;
+output out=base mean=age60 age70 raceb raceo sexm smokef smokec
+_X5-_X7 hxnout1 hxnout2 hxnmed1 hxnmed2  hxnin1 hxnegfr1
+bmiob bmiover lung cancer cvd cad dementia pad hyperlip htn dm depression anxiety ckd cmrb1 cmrb2 hepc longterm;
+run;
+
+
+data base;
+set base;
+pos=0;hos=0;icu=0;group="0VHA"; output;
+pos=1;hos=0;icu=0;group="1POS"; output;
+pos=0;hos=1;icu=0;group="2HOS"; output;
+pos=0;hos=0;icu=1;group="3ICU"; output;
+run;
+
+
+
+ods output covb=cov parameterestimates=pe;
+proc genmod data=model;
+model norgan=pos hos icu age60 age70 raceb raceo sexm smokef smokec
+_X5-_X7 hxnout1 hxnout2 hxnmed1 hxnmed2 hxnin1 hxnegfr1
+bmiob bmiover lung cancer cvd cad dementia pad hyperlip htn dm depression anxiety ckd cmrb1 cmrb2 hepc longterm 
+/dist=poisson link=log offset=lntime covb;
+run;
+
+
+
+
+
+
+/***burden at each time point**/
+
+data check;
+set estimate1;
+keep rate1-rate11  group num;
+run;
+
+
+proc sort data=check;
+by num  group;
+run;
+
+data check1;
+set check;
+by num group;
+retain vha1-vha11 pos1-pos11 hos1-hos11 icu1-icu11;
+array v[11] vha1-vha11;
+array p[11] pos1-pos11;
+array h[11] hos1-hos11;
+array i[11] icu1-icu11;
+array r[11] rate1-rate11;
+array pb[11] posburden1-posburden11;
+array hb[11] hosburden1-hosburden11;
+array ib[11] icuburden1-icuburden11;
+
+if first.num then do x=1 to 11;
+v[x]=0;p[x]=0;h[x]=0;i[x]=0;
+end;
+
+do q=1 to 11;
+if group="0VHA" then v[q]=r[q]*1000;
+else if group="1POS" then p[q]=r[q]*1000;
+else if group="2HOS" then h[q]=r[q]*1000;
+else if group="3ICU" then i[q]=r[q]*1000;
+end;
+
+ do w=1 to 11;
+pb[w]=(p[w]-v[w]);
+hb[w]=(h[w]-v[w]);
+ib[w]=(i[w]-v[w]);
+
+end;
+if last.num then output;
+
+run;
+
+data burden;
+set check1;
+array v[11] vha1-vha11;
+array p[11] pos1-pos11;
+array h[11] hos1-hos11;
+array i[11] icu1-icu11;
+array r[11] rate1-rate11;
+array pb[11] posburden1-posburden11;
+array hb[11] hosburden1-hosburden11;
+array ib[11] icuburden1-icuburden11;
+array any[11] any1-any11;
+array anyb[11] anyburden1-anyburden11;
+do x=1 to 11;
+ anyb[x]=pb[x]*&pos+hb[x]*&hos+ib[x]*&icu;
+ any[x]=p[x]*&pos+h[x]*&hos+i[x]*&icu;
+end;
+
+
+run;
+
+
+proc univariate data=burden;
+var  any1-any11 vha1-vha11 pos1-pos11 hos1-hos11 icu1-icu11 
+anyburden1-anyburden11 posburden1-posburden11 hosburden1-hosburden11 icuburden1-icuburden11;
+
+
+output out=result pctlpts=50 2.5 97.5 pctlname=m l u 
+pctlpre= any1-any11 vha1-vha11 pos1-pos11 hos1-hos11 icu1-icu11 
+anyburden1-anyburden11 posburden1-posburden11 hosburden1-hosburden11 icuburden1-icuburden11;
+run;
+
+%macro outplot();
+data plot;
+set result;
+
+%do i=1 %to 11;
+vha=vha&i.m;
+pos=pos&i.m;
+hos=hos&i.m;
+icu=icu&i.m;
+any=any&i.m;
+
+
+posburden=posburden&i.m;
+hosburden=hosburden&i.m;
+icuburden=icuburden&i.m;
+anyburden=anyburden&i.m;
+
+Norgan=&i;
+output;
+%end;
+run;
+%mend;
+%outplot();
+
+
+
+

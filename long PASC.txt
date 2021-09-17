@@ -1,0 +1,192 @@
+/**risk and burden of ind PASC**/
+
+
+
+
+%macro burdensubgroup(outcome, cri);
+
+data model1;
+set model;
+where &cri and hx_&outcome =.;
+run;
+
+
+proc freq data=model1;
+table group/out=freq;
+where group^="0VHA";
+run;
+
+data freq;
+set freq;
+if group="1POS" then call symput ("P_pos",percent/100);
+if group="2HOS" then call symput ("P_hos",percent/100);
+if group="3ICU" then call symput ("P_icu",percent/100);
+run;
+
+proc means data=model1;
+var pos hos icu age60 age70 raceb raceo sexm smokef smokec
+_X5-_X7 hxnout1 hxnout2 hxnmed1 hxnmed2  hxnin1 hxnegfr1
+bmiob bmiover lung cancer cvd cad dementia pad hyperlip htn dm depression anxiety ckd 
+cmrb1 cmrb2 hepc longterm totbed pos_rate test_num avg_bed ne mw we;
+
+output out=base_ol mean=pos hos icu age60 age70 raceb raceo sexm smokef smokec
+_X5-_X7 hxnout1 hxnout2 hxnmed1 hxnmed2  hxnin1 hxnegfr1
+bmiob bmiover lung cancer cvd cad dementia pad hyperlip htn dm depression anxiety ckd 
+cmrb1 cmrb2 hepc longterm totbed pos_rate test_num avg_bed ne mw we;
+run;
+
+
+data base;
+set base_ol;
+base="OL";
+group="0VHA"; pos=0;hos=0;icu=0; output;
+group="1POS"; pos=1;hos=0;icu=0; output;
+group="2HOS"; pos=0;hos=1;icu=0;output;
+group="3ICU"; pos=0;hos=0;icu=1;output;
+run;
+
+
+data base0;
+set base;
+where group="0VHA";
+run;
+/***start modelling**/
+
+
+
+data model1;
+set model1;
+if oc_&outcome ^=. and oc_&outcome >t0+29 and  oc_&outcome <="31AUG2021"d then do;
+event=1; time=oc_&outcome -t0-29;
+end;
+
+else do;
+event=0; time=deathtime;
+end;
+
+time=floor(time/5);
+run;
+
+
+ods output parameterestimates=pe covb=cov;
+proc phreg data=model1;
+class group;
+model time*event(0)=pos hos icu age60 age70 raceb raceo sexm smokef smokec
+_X5-_X7 hxnout1 hxnout2 hxnmed1 hxnmed2  hxnin1 hxnegfr1
+bmiob bmiover lung cancer cvd cad dementia pad hyperlip htn dm depression anxiety ckd 
+cmrb1 cmrb2 hepc longterm totbed pos_rate test_num avg_bed ne mw we
+/covb;
+baseline covariates=base0 survival=sur timelist=30 out=sur lower=surl upper=suru ;
+run;
+
+
+data pe1;
+set pe;
+length _name_ $128.;
+_type_='PARMS';
+_name_='time';
+array b[3] pos hos icu ;
+retain pos hos icu ;
+if _n_<=3 then b[_n_]=estimate;
+if _n_=3 then output;
+drop df estimate stderr chisq probchisq hazardratio parameter;
+run;
+
+data cov1;
+set cov;
+rename parameter=_name_;
+_type_='COV';
+
+array b[3] pos hos icu;
+do i=1 to 3;
+if b[i]=. then b[i]=0;
+end;
+
+if _n_<=3 then output;
+keep _type_ parameter pos hos icu;
+
+
+run;
+
+proc iml;
+use cov1;
+read all var _all_ into cov2;
+use pe1;
+read all var _all_ into pe2;
+Numsamples=1000;
+call randseed(12);
+X=randnormal(numsamples,pe2,cov2);
+create zzz from x;
+append from x;
+close zzz;
+quit;
+
+data zzz;
+set zzz;
+z=1;
+num=_n_;
+run;
+
+data sur;
+set sur;
+call symput ("base",sur);
+call symput ("basel",surl);
+call symput ("baseu",suru);
+run;
+
+data estimate;
+set zzz;
+poshr=exp(col1);
+hoshr=exp(col2);
+icuhr=exp(col3);
+
+vhal=1-&baseu;
+vhau=1-&basel;
+vha=1-&base;
+pos=1-&base**poshr;
+hos=1-&base**hoshr;
+icu=1-&base**icuhr;
+
+posburden=(pos-vha)*1000;
+hosburden=(hos-vha)*1000;
+icuburden=(icu-vha)*1000;
+
+anyhr=exp(col1*&P_pos+col2*&P_hos+col3*&P_icu);
+anyburden=posburden*&P_pos+hosburden*&P_hos+icuburden*&P_icu;
+outcome="&outcome";
+sub="&cri";
+p_pos=&p_pos;
+p_hos=&p_hos;
+p_icu=&p_icu;
+run;
+
+
+data covprv.burden_subgroup_all_NC4;
+set covprv.burden_subgroup_all_NC4 estimate;
+run;
+
+%mend;
+
+data covprv.burden_subgroup_all_NC4;
+set _null_;
+length outcome $32. sub $64.;
+run;
+
+
+
+
+%let list= aki6  anxiety  bradycardia chest ckd5 constipation cough depression diarrhea
+dm fatigue gerd hair headache heartrhythm hf hyperlip hypoxemia joint memory mi mood muscle myocard 
+obese shortbreath skin sleep smell stroke substance tachycardia thrombo;
+
+%macro loop(begin,end);
+%do q=&begin %to &end;
+%let manifest=%scan(&&list,&q);
+%burdensubgroup(&&manifest, cri= age60^=. );
+
+%end;
+%mend;
+
+%loop(1,33);
+
+
